@@ -1,310 +1,339 @@
+# Warning! This code is built for parallel computation. 
+# For those who want to use the single core, all the command relevant to "parallel" package should be removed and modified.
+# However, running this code using single core would cost ~263 hours depending on the system.
+
+# To run "bvdv_simulation.c" in R, one should compile the .c file into .dll that can be recognised and imported to R.
+# Compilation can be done by running "R CMD SHLIB bvdv_simulation.c" at either R terminal or MS-DOS prompt.
+# To run "R CMD SHLIB", one may need to install "Rtools35.exe".
+
+rm(list= ls())
+library(parallel)
+library(TeachingDemos)
+
+
+detectCores(logical= T)
+n_core <- 8 # It depends on the number of core available for the local machine.
+cl <- makeCluster(n_core)
+
+# Setup seed for RNG
+clusterSetRNGStream(cl, iseed= 1)
+
 # ABC-SMC for estimating within-herd BVDV transmission parameter
-rm(list=ls ())
-library(ggplot2)
-
-setwd("D:/Temp/RC")
-farm <- "F04"
-
-# Varibles for ABC-SMC
-max_i <- 5000 # Number of particles
-tuner <- 0.1
-list_beta <- NULL # Particles of beta
-list_rho <- NULL # Particles of rho
-list_tau <- NULL # Particles of tau
+setwd("D:/Temp/Seroconversion")
 
 # Observed value
-n_hfr <- 40
-n_sample <- 15
-n_test01 <- 9
-n_test02 <- 15
+n_hfr <- c(42, 90, 45, 26, 23, 40, 21, 20, 29)
+init_age <- c(202, 257, 242, 233, 225, 207, 227, 221, 208)
+n_sample <- c(15, 14, 15, 15, 15, 14, 15, 15, 15)
+f_psm <- c(250, 230, 203, 236, 590, 250, 590, 236, 240) 
+s_psm <- f_psm + 365
+mate_period <- c(70, 42, 42, 84 ,84, 42, 84, 112, 84)
+d_test01 <- c(590, 549, 533, 579, 946, 625, 950, 597, 640)
+d_test02 <- c(735, 690, 711, 731, 1097, 752, 1097, 736, 794)
+n_test01 <- c(9, 11, 2, 13, 13, 7, 3, 12, 14)
+n_test02 <- c(6, 1, 6, 2, 2, 4, 9, 3, 1)
 
-d_mate_start <- 250
-d_mate_end <- 306
-
-p_conc <- 0.0411
-
-d_test01 <- 590
-d_test02 <- 735
-
-n_sim_pos01 <- 0
-n_sim_pos02 <- 0
-
-p_sim01 <- 0
-p_sim02 <- 0
-
-# Error setting
-epsilon <- c(6, 5, 4, 3, 2, 1, 0)
-#p_obs01 <- n_test01/n_sample
-#p_obs02 <- n_test02/n_sample
-#e_list <- c(.01, .05, .35, .65, .95, .99)
-#
-#dist01 <- (p_obs01*(1-p_obs01)/n_sample)^0.5
-#dist02 <- (p_obs02*(1-p_obs02)/n_sample)^0.5
-#
-#epsilon <- NULL
-#for (i in 1:length(e_list)) {
-#  epsilon <- c(epsilon, (0.5 * (dist01*qnorm(1-e_list[i]/2, 0, 1))^2 + (dist02*qnorm(1-e_list[i]/2, 0, 1))^2)^0.5)
-#}
-#rm(dist01, dist02, e_list)
+clusterExport(cl, c("n_hfr", "init_age", "n_sample", "f_psm", "s_psm", "mate_period", "d_test01", "d_test02", "n_test01", "n_test02"))
 
 
-# Sampling particles of the first population
-bvdv_simulation <- function() {
+# Setting the varibles for ABC-SMC
+max_t <- 15 # Number of sequences
+max_i <- 2000/n_core # Number of particles
+tuner <- 0.68
+
+n_sim_pos01 <- rep(0, 9)
+n_sim_pos02 <- rep(0, 9)
+
+diff_01_list <- NULL # List to store the summary statistics
+diff_02_list <- NULL # List to store the summary statistics
+
+clusterExport(cl, c("max_t", "max_i", "tuner", "n_sim_pos01", "n_sim_pos02"))
+
+# Model description for the practise and first sequence
+bvdv_simulation <- function(beta, n_hfr, init_age, n_sample, f_psm, s_psm, 
+                            mate_period, d_test01, d_test02, n_sim_pos01, n_sim_pos02) {
   
-  repeat {
-    #beta <- runif(1, 0, 1)
-    beta <- rbeta(1, 1.1785, 1.5355)
-    if (beta >= 0.0000 & beta <= 1.0000) {break}	
-  }
+  repeat {rho <- rbeta(1, 1.1386, 7.7907);if (rho >= 0 & rho <= 1) {break}}
+  repeat {mu <- runif(1, 0, 1);if (mu >= 0 & mu <= 1) {break}}
+  repeat {tau <- round(runif(1, 1, d_test01)); if (tau >= 1 & tau <= d_test01) {break}}
   
-  repeat {
-    #rho <- runif(1, 0, 1)
-    rho <- rbeta(1, 1.1386, 7.7907)
-    if (rho >= 0.0000 & rho <= 1.0000) {break}	
-  }
-  
-  repeat {
-    tau <- round(runif(1, 0, d_test01-1))
-    if (tau >= 0 & tau <= d_test01-1) {break}	
-  }
-  
-  .C("bvdv_simulation", as.double(beta), as.double(rho), as.integer(tau), as.integer(n_hfr), 
-     as.integer(n_sample), as.double(p_conc), as.integer(d_mate_start), as.integer(d_mate_end), 
-     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02), 
-     as.double(p_sim01), as.double(p_sim02))
+  .C("bvdv_simulation", as.double(beta), as.double(rho), as.double(mu), as.integer(tau), as.integer(n_hfr), 
+     as.integer(init_age), as.integer(n_sample), as.integer(f_psm), as.integer(s_psm), as.integer(mate_period), 
+     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02))
 }
 
-dyn.load("bvdv_simulation.dll")
-#dyn.unload("bvdv_simulation_sa01.dll")
+clusterExport(cl, c('bvdv_simulation'))
 
 
-# ABC-SMC for the first sequence
 t_init <- proc.time()
-t <- 1; i <- 1
-
-while (i <= max_i) {
-  result <- bvdv_simulation()
-  
-  #if (((result[[13]] - p_obs01)^2 + (result[[14]] - p_obs02)^2) <= epsilon[t]) {
-  if (((result[[11]] - n_test01)^2 + (result[[12]] - n_test02)^2) <= epsilon[t]) {
-    list_beta <- c(list_beta, result[[1]])
-    list_rho <- c(list_rho, result[[2]])
-    list_tau <- c(list_tau, result[[3]])
+# Estimating the initial tolerances
+result <- 
+  clusterEvalQ(cl, {
     
-    i= i+1
+    dyn.load("D:/Temp/Seroconversion/bvdv_simulation.dll")
+    i <- 0
+    diff_01_list <- NULL; diff_02_list <- NULL
+    while (i < max_i) {
+      repeat {beta <- rbeta(1, 1.9668, 2.4501); if (beta >= 0 & beta <= 1) {break}}
+
+      for (j in 1:9) {
+        assign(paste("result0", j, sep= ""), 
+               bvdv_simulation(beta, n_hfr[j], init_age[j], n_sample[j], f_psm[j], s_psm[j], 
+                               mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j]))
+      }
+      
+      diff01 <- (
+        (result01[[13]] - n_test01[1])^2 + (result02[[13]] - n_test01[2])^2 + (result03[[13]] - n_test01[3])^2 + 
+          (result04[[13]] - n_test01[4])^2 + (result05[[13]] - n_test01[5])^2 + (result06[[13]] - n_test01[6])^2 +
+          (result07[[13]] - n_test01[7])^2 + (result08[[13]] - n_test01[8])^2 + (result09[[13]] - n_test01[9])^2)^0.5
+      
+      diff02 <- (
+        (result01[[14]] - n_test02[1])^2 + (result02[[14]] - n_test02[2])^2 + (result03[[14]] - n_test02[3])^2 + 
+          (result04[[14]] - n_test02[4])^2 + (result05[[14]] - n_test02[5])^2 + (result06[[14]] - n_test02[6])^2 +
+          (result07[[14]] - n_test02[7])^2 + (result08[[14]] - n_test02[8])^2 + (result09[[14]] - n_test02[9])^2)^0.5
+      
+      diff_01_list <- c(diff_01_list, diff01)
+      diff_02_list <- c(diff_02_list, diff02)
+      
+      i <- i + 1
+    }
+    list(diff_01_list, diff_02_list)
   }
-  rm(result)
+  )
+
+for (i in 1:length(result)) {
+  diff_01_list <- c(diff_01_list, result[[i]][[1]]) 
+  diff_02_list <- c(diff_02_list, result[[i]][[2]])  
 }
 
-wgt_beta <- rep(1/max_i, max_i)
-wgt_rho <- rep(1/max_i, max_i)
-wgt_tau <- rep(1/max_i, max_i)
+# Update tolerance
+epsilon <- c(as.numeric(quantile(diff_01_list, 0.5)), as.numeric(quantile(diff_02_list, 0.5)))
+diff_01_list <- NULL; diff_02_list <- NULL
+print(epsilon); clusterExport(cl, "epsilon")
+
+
+# Setting the weights and sd for sampling in the second sequence of ABC-SMC
+beta_list <- rbeta(max_i*n_core, 1.9668, 2.4501)
+mu_list <- NULL
+rho_list <- NULL
+tau_list <- NULL
+
+for (j in 1:9) {
+  mu_list[[j]] <- runif(max_i*n_core, 0, 1)
+  rho_list[[j]] <- rbeta(max_i*n_core, 1.1386, 7.7907)
+  tau_list[[j]] <- round(runif(max_i*n_core, 1, d_test01[j]))
+}
+
+beta_wgt <- rep(1/max_i*n_core, max_i*n_core)
+rho_wgt<- list(rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+               rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+               rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core))
+mu_wgt<- list(rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+              rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+              rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core))
+tau_wgt<- list(rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+               rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
+               rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core))
+
+beta_list_tmp <- NULL; beta_wgt_tmp <- NULL
+
+rho_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+rho_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+mu_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+mu_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+tau_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+tau_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+
+rho_sd <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+mu_sd <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+tau_sd <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+
+beta_ess <- NULL
+rho_ess <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+mu_ess <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+tau_ess <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+
+beta_ess <- c(beta_ess, 1/sum((beta_wgt/sum(beta_wgt))^2)) # Sum of squre-inverse of normalised weights
+for (j in 1:9) {
+  rho_ess[[j]] <- c(rho_ess[[j]], 1/sum((rho_wgt[[j]]/sum(rho_wgt[[j]]))^2))
+  mu_ess[[j]] <- c(mu_ess[[j]], 1/sum((mu_wgt[[j]]/sum(mu_wgt[[j]]))^2))
+  tau_ess[[j]] <- c(tau_ess[[j]], 1/sum((tau_wgt[[j]]/sum(tau_wgt[[j]]))^2))
+}
+
+
+# Model description for the rest sequences
+bvdv_simulation <- function(beta, rho_list, rho_wgt, rho_sd, mu_list, mu_wgt, mu_sd, tau_list, tau_wgt, tau_sd, 
+                            n_hfr, init_age, n_sample, f_psm, s_psm, mate_period, d_test01, d_test02, n_sim_pos01, n_sim_pos02) {
+  
+  repeat {rho_star <- sample(rho_list, size= 1, prob= rho_wgt)
+    rho <- rnorm(1, rho_star, rho_sd); if (rho >= 0 & rho <= 1) {break}}
+  repeat {mu_star <- sample(mu_list, size= 1, prob= mu_wgt) 
+    mu <- rnorm(1, mu_star, mu_sd); if (mu >= 0 & mu <= 1) {break}}
+  repeat {tau_star <- sample(tau_list, size= 1, prob= tau_wgt) 
+    tau <- round(rnorm(1, tau_star, tau_sd)); if (tau >= 1 & tau <= d_test01) {break}}
+  
+  .C("bvdv_simulation", as.double(beta), as.double(rho), as.double(mu), as.integer(tau), as.integer(n_hfr), as.integer(init_age), 
+     as.integer(n_sample), as.integer(f_psm), as.integer(s_psm), as.integer(mate_period), 
+     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02))
+}
+
+clusterExport(cl, c('bvdv_simulation'))
 
 
 # Sampling particles of the rest population
-bvdv_simulation <- function() {
+total_count <- 0
+for (t in 2:max_t) {
+  rm(result)
+  clusterExport(cl, c("beta_list", "mu_list", "rho_list", "tau_list", "beta_wgt", "rho_wgt", "mu_wgt", "tau_wgt", "rho_sd", "mu_sd", "tau_sd"))
   
-  repeat {
-    beta_star <- sample(list_beta, size= 1, prob= wgt_beta)
-    beta <- runif(1, min= beta_star - (tuner * (max(list_beta) - min(list_beta))), 
-                  max= beta_star + (tuner * (max(list_beta) - min(list_beta))))
-    if (beta >= 0.0000 & beta <= 1.0000) {break}	
-  }
-  
-  repeat {
-    rho_star <- sample(list_rho, size= 1, prob= wgt_rho)
-    rho <- runif(1, min= rho_star - (tuner * (max(list_rho) - min(list_rho))), 
-                 max= rho_star + (tuner * (max(list_rho) - min(list_rho))))
-    if (rho >= 0.0000 & rho <= 1.0000) {break}	
-  }
-  
-  repeat {
-    tau_star <- sample(list_tau, size= 1, prob= wgt_tau)
-    tau <- runif(1, min= tau_star - (tuner * (max(list_tau) - min(list_tau))), 
-                 max= tau_star + (tuner * (max(list_tau) - min(list_tau))))
-    if (tau >= 0 & tau <= d_test01-1) {break}	
-  }
-  
-  .C("bvdv_simulation", as.double(beta), as.double(rho), as.integer(tau), as.integer(n_hfr), 
-     as.integer(n_sample), as.double(p_conc), as.integer(d_mate_start), as.integer(d_mate_end), 
-     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02), 
-     as.double(p_sim01), as.double(p_sim02))
-}
-
-for (t in 2:length(epsilon)) {
-  
-  tlist_beta <- NULL
-  tlist_rho <- NULL
-  tlist_tau <- NULL
-  
-  tlist_wgt_beta <- NULL
-  tlist_wgt_rho <- NULL
-  tlist_wgt_tau <- NULL
-  
-  list_sim01 <- NULL
-  list_sim02 <- NULL
-  
-  i <- 1
-  while (i <= max_i) {
-    result <- bvdv_simulation()
-    
-    #if (((result[[13]] - p_obs01)^2 + (result[[14]] - p_obs02)^2) <= epsilon[t]) {
-    if (((result[[11]] - n_test01)^2 + (result[[12]] - n_test02)^2) <= epsilon[t]) {
+  # Estimate the SD of particles in the previous sequence  
+  result <- 
+    clusterEvalQ(cl, {
       
-      tlist_beta <- c(tlist_beta, result[[1]])
-      tlist_rho <- c(tlist_rho, result[[2]])
-      tlist_tau <- c(tlist_tau, result[[3]])
+      dyn.load("D:/Temp/Seroconversion/bvdv_simulation.dll")
       
-      #tlist_wgt_beta <- c(tlist_wgt_beta, 1 / sum(wgt_beta))    
-      tlist_wgt_beta <- c(tlist_wgt_beta, dbeta(result[[1]], 1.1785, 1.5355) / sum(wgt_beta))    
+      diff_01_list <- NULL; diff_02_list <- NULL
       
-      #tlist_wgt_rho <- c(tlist_wgt_rho, 1 / sum(wgt_rho))    
-      tlist_wgt_rho <- c(tlist_wgt_rho, dbeta(result[[2]], 1.1386, 7.7907) / sum(wgt_rho))    
+      beta_sd <- (tuner * sum(((beta_list - mean(beta_list))^2) * beta_wgt) / sum(beta_wgt))^0.5
       
-      tlist_wgt_tau <- c(tlist_wgt_tau, 1 / sum(wgt_tau))
+      for (j in 1:9) {
+        rho_sd[[j]] <- (tuner * sum(((rho_list[[j]] - mean(rho_list[[j]]))^2) * rho_wgt[[j]]) / sum(rho_wgt[[j]]))^0.5
+        mu_sd[[j]] <- (tuner * sum(((mu_list[[j]] - mean(mu_list[[j]]))^2) * mu_wgt[[j]]) / sum(mu_wgt[[j]]))^0.5
+        tau_sd[[j]] <- (tuner * sum(((tau_list[[j]] - mean(tau_list[[j]]))^2) * tau_wgt[[j]]) / sum(tau_wgt[[j]]))^0.5
+      }
       
-      list_sim01 <- c(list_sim01, result[[11]])
-      list_sim02 <- c(list_sim02, result[[12]])
+      # Prepare the lists for storing intermediate results 
+      beta_list_tmp <- NULL; beta_wgt_tmp <- NULL
       
-      i= i+1
+      rho_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      rho_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      mu_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      mu_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      tau_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      tau_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      
+      i <- 0; d <- 1
+      while (i < max_i) {
+        
+        repeat {beta_star <- sample(beta_list, size= 1, prob= beta_wgt)
+          beta <- rnorm(1, beta_star, beta_sd); if (beta >= 0 & beta <= 1) {break}}
+      
+        for (j in 1:9) {
+          assign(paste("result0", j, sep= ""), 
+                 bvdv_simulation(beta, rho_list[[j]], rho_wgt[[j]], rho_sd[[j]], mu_list[[j]], mu_wgt[[j]], mu_sd[[j]], 
+                                 tau_list[[j]], tau_wgt[[j]], tau_sd[[j]], n_hfr[j], init_age[j], n_sample[j], f_psm[j], s_psm[j], 
+                                 mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j]))
+        }
+        
+        diff01 <- (
+          (result01[[13]] - n_test01[1])^2 + (result02[[13]] - n_test01[2])^2 + (result03[[13]] - n_test01[3])^2 + 
+            (result04[[13]] - n_test01[4])^2 + (result05[[13]] - n_test01[5])^2 + (result06[[13]] - n_test01[6])^2 +
+            (result07[[13]] - n_test01[7])^2 + (result08[[13]] - n_test01[8])^2 + (result09[[13]] - n_test01[9])^2)^0.5
+        
+        diff02 <- (
+          (result01[[14]] - n_test02[1])^2 + (result02[[14]] - n_test02[2])^2 + (result03[[14]] - n_test02[3])^2 + 
+            (result04[[14]] - n_test02[4])^2 + (result05[[14]] - n_test02[5])^2 + (result06[[14]] - n_test02[6])^2 +
+            (result07[[14]] - n_test02[7])^2 + (result08[[14]] - n_test02[8])^2 + (result09[[14]] - n_test02[9])^2)^0.5
+        
+        if (diff01 <= epsilon[1] & diff02 <= epsilon[2]) {
+          beta_list_tmp <- c(beta_list_tmp, beta)
+          beta_wgt_tmp <- c(beta_wgt_tmp, dbeta(beta, 1.9668, 2.4501) / sum(beta_wgt * dnorm(beta, beta_list, beta_sd)))
+          
+          for (j in 1:9) {
+            rho_list_tmp[[j]] <- c(rho_list_tmp[[j]], get(paste("result0", j, sep= ""))[[2]])
+            rho_wgt_tmp[[j]] <- c(rho_wgt_tmp[[j]], 
+                                  dbeta(get(paste("result0", j, sep= ""))[[2]], 1.1386, 7.7907)/
+                                    sum(rho_wgt[[j]] * dnorm(get(paste("result0", j, sep= ""))[[2]], rho_list[[j]], rho_sd[[j]])))
+            
+            mu_list_tmp[[j]] <- c(mu_list_tmp[[j]], get(paste("result0", j, sep= ""))[[3]])
+            mu_wgt_tmp[[j]] <- c(mu_wgt_tmp[[j]], 1/sum(mu_wgt[[j]] * dnorm(get(paste("result0", j, sep= ""))[[3]], mu_list[[j]], mu_sd[[j]])))
+            
+            tau_list_tmp[[j]] <- c(tau_list_tmp[[j]], get(paste("result0", j, sep= ""))[[4]])
+            tau_wgt_tmp[[j]] <- c(tau_wgt_tmp[[j]], 1/sum(tau_wgt[[j]] * dnorm(get(paste("result0", j, sep= ""))[[4]], tau_list[[j]], tau_sd[[j]])))
+          }
+          
+          diff_01_list <- c(diff_01_list, diff01)
+          diff_02_list <- c(diff_02_list, diff02)
+          
+          i<- i + 1
+        }
+        d <- d + 1
+      }
+      beta_list <- beta_list_tmp
+      beta_wgt <- beta_wgt_tmp
+      
+      rho_list <- rho_list_tmp; rho_wgt <- rho_wgt_tmp
+      mu_list <- mu_list_tmp; mu_wgt <- mu_wgt_tmp
+      tau_list <- tau_list_tmp; tau_wgt <- tau_wgt_tmp
+      
+      list(diff_01_list, diff_02_list, beta_list, beta_wgt, rho_list, rho_wgt, mu_list, mu_wgt, tau_list, tau_wgt, d)
     }
+    
+    )
+  
+  diff_01_list <- NULL; diff_02_list <- NULL
+  for (i in 1:length(result)) {
+    diff_01_list <- c(diff_01_list, result[[i]][[1]]) 
+    diff_02_list <- c(diff_02_list, result[[i]][[2]])
+    beta_list_tmp <- c(beta_list_tmp, result[[i]][[3]])
+    beta_wgt_tmp <- c(beta_wgt_tmp, result[[i]][[4]])
+    
+    for (j in 1:9) {
+      rho_list_tmp[[j]] <- c(rho_list_tmp[[j]], result[[i]][[5]][[j]])
+      rho_wgt_tmp[[j]] <- c(rho_wgt_tmp[[j]], result[[i]][[6]][[j]])
+      mu_list_tmp[[j]] <- c(mu_list_tmp[[j]], result[[i]][[7]][[j]])
+      mu_wgt_tmp[[j]] <- c(mu_wgt_tmp[[j]], result[[i]][[8]][[j]])
+      tau_list_tmp[[j]] <- c(tau_list_tmp[[j]], result[[i]][[9]][[j]])
+      tau_wgt_tmp[[j]] <- c(tau_wgt_tmp[[j]], result[[i]][[10]][[j]])
+      
+    }
+    
+    total_count <- total_count + result[[i]][[11]]
   }
   
-  list_beta <- tlist_beta
-  list_rho <- tlist_rho
-  list_tau <- tlist_tau
+  # Effective sample sizes for each parameter
+  beta_ess <- c(beta_ess, 1/sum((beta_wgt_tmp/sum(beta_wgt_tmp))^2)) # Sum of squre-inverse of normalised weights
+  for (j in 1:9) {
+    rho_ess[[j]] <- c(rho_ess[[j]], 1/sum((rho_wgt_tmp[[j]]/sum(rho_wgt_tmp[[j]]))^2))
+    mu_ess[[j]] <- c(mu_ess[[j]], 1/sum((mu_wgt_tmp[[j]]/sum(mu_wgt_tmp[[j]]))^2))
+    tau_ess[[j]] <- c(tau_ess[[j]], 1/sum((tau_wgt_tmp[[j]]/sum(tau_wgt_tmp[[j]]))^2))
+  }
   
-  wgt_beta <- tlist_wgt_beta
-  wgt_rho <- tlist_wgt_rho
-  wgt_tau <- tlist_wgt_tau
+  # Update tolerance
+  epsilon <- c(as.numeric(quantile(diff_01_list, 0.5)), as.numeric(quantile(diff_02_list, 0.5)))
+  
+  beta_result <- beta_list
+  beta_list <- NULL # Particles of beta
+  
+  beta_list <- beta_list_tmp
+  beta_wgt <- beta_wgt_tmp
+  
+  rho_list <- rho_list_tmp; rho_wgt <- rho_wgt_tmp
+  mu_list <- mu_list_tmp; mu_wgt <- mu_wgt_tmp
+  tau_list <- tau_list_tmp; tau_wgt <- tau_wgt_tmp
+  
+  beta_list_tmp <- NULL; beta_wgt_tmp <- NULL
+  
+  rho_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  rho_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  mu_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  mu_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  tau_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  tau_wgt_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+  
+  if (t != max_t) {
+    assign(paste("beta", t, sep= ""), beta_list)
+    assign(paste("rho", t, sep= ""), rho_list)
+    assign(paste("mu", t, sep= ""), mu_list)
+    assign(paste("tau", t, sep= ""), tau_list)
+  }
+  
+  clusterExport(cl, "epsilon")
+  print(t); print(epsilon); t_mid <- proc.time(); print(t_mid - t_init); Sys.sleep(0.01)
 }
 
-proc.time() - t_init
-dyn.unload("bvdv_simulation.dll")
-#dyn.unload("bvdv_simulation_sa01.dll")
+stopCluster(cl)
+t_end <- proc.time()
+t_end - t_init
 
-
-# Descriptive statistics of the result
-quantile(list_beta, probs= c(0.05, 0.25, 0.5, 0.75, 0.95)); hist(list_beta)
-quantile(list_rho, probs= c(0.05, 0.25, 0.5, 0.75, 0.95)); hist(list_rho)
-quantile(list_tau, probs= c(0.05, 0.25, 0.5, 0.75, 0.95)); hist(list_tau)
-
-quantile(list_sim01, probs= c(0.05, 0.25, 0.5, 0.75, 0.95)); n_test01; hist(list_sim01)
-quantile(list_sim02, probs= c(0.05, 0.25, 0.5, 0.75, 0.95)); n_test02; hist(list_sim02)
-
-
-# Beta:             5%       25%       50%       75%       95% 
-## Original: 0.4510471 0.5635389 0.6370501 0.7173260 0.8273098
-## 0.01 TI:  0.4310139 0.5455339 0.6297603 0.7130800 0.8286523
-## 0.10 TI:  0.4707612 0.5694092 0.6400318 0.7175812 0.8245427
-## Uni-Beta: 0.6273355 0.7466245 0.8236772 0.8910183 0.9665029
-## Uni-Rho:  0.4668673 0.5762697 0.6581800 0.7392723 0.8495488
-
-# Rho:               5%       25%         50%        75%        95% 
-## Original: 0.01556799 0.02158055 0.02662769 0.03135023 0.03638902
-## 0.01 TI:  0.01542385 0.02104635 0.02604048 0.03103224 0.03635030
-## 0.10 TI:  0.01522382 0.02061453 0.02590789 0.03086326 0.03625318
-## Uni-Beta: 0.01521305 0.02089753 0.02619890 0.03102464 0.03598309
-## Uni-Rho:  0.01552894 0.02124073 0.02631076 0.03118635 0.03641848
-
-# Tau:        5% 25% 50% 75% 95% 
-## Original: 396 481 503 517 533
-## 0.01 TI:  381 409 463 496 518
-## 0.10 TI:  485 510 523 534 546
-## Uni-Beta: 494 511 522 531 543
-## Uni-Rho:  399 486 506 519 535
-
-# Export beta, rho, tau for visualisation
-write.table(data.frame(list_beta, list_rho, list_tau), paste("Para_", farm, ".csv", sep=""), sep= ",", row.names= F, col.names= F)
-
-
-# Select the parameter sets with the most probable beta
-density(list_beta)$x[which.max(density(list_beta)$y)] # 0.6141476
-density(list_rho)$x[which.max(density(list_beta)$y)] # 0.03576595
-density(list_tau)$x[which.max(density(list_beta)$y)] # 439
-density(list_rho)$x[which.max(density(list_rho)$y)] # 0.02663139
-density(list_tau)$x[which.max(density(list_tau)$y)] # 512
-
-
-# Run a disease simulation using C and Import the result
-dat_s <- read.table(paste("Prev_s_", farm, ".csv", sep= ""), header= F, sep= ",")
-dat_r <- read.table(paste("Prev_r_", farm, ".csv", sep= ""), header= F, sep= ",")
-dat_pi <- read.table(paste("Prev_pi_", farm, ".csv", sep= ""), header= F, sep= ",")
-
-quantile(dat_s[, d_test02], probs= c(0.05, 0.5, 0.95)) # 0.03, 0.10, 0.55
-
-Se <- 0.969; Sp <- 0.978
-dat_s <- dat_s * (Se + Sp - 1) - Sp + 1
-dat_s <- dat_s * 100
-dat_s <- dat_s[, -(d_test02+1)]
-
-dat_r <- dat_r * (Se + Sp - 1) - Sp + 1
-dat_r <- dat_r * 100
-dat_r <- dat_r[, -(d_test02+1)]
-
-dat_pi <- dat_pi * (Se + Sp - 1) - Sp + 1
-dat_pi <- dat_pi * 100
-dat_pi <- dat_pi[, -(d_test02+1)]
-
-prev_s_0.05 <- NULL; prev_s_0.50 <- NULL ; prev_s_0.95 <- NULL
-prev_r_0.05 <- NULL; prev_r_0.50 <- NULL ; prev_r_0.95 <- NULL
-prev_pi_0.05 <- NULL; prev_pi_0.50 <- NULL ; prev_pi_0.95 <- NULL
-
-for (i in 1:d_test02) {
-  prev_s_0.05 <- c(prev_s_0.05, quantile(dat_s[,i], probs= 0.05))
-  prev_s_0.50 <- c(prev_s_0.50, quantile(dat_s[,i], probs= 0.50))
-  prev_s_0.95 <- c(prev_s_0.95, quantile(dat_s[,i], probs= 0.95))
-  
-  prev_r_0.05 <- c(prev_r_0.05, quantile(dat_r[,i], probs= 0.05))
-  prev_r_0.50 <- c(prev_r_0.50, quantile(dat_r[,i], probs= 0.50))
-  prev_r_0.95 <- c(prev_r_0.95, quantile(dat_r[,i], probs= 0.95))
-  
-  prev_pi_0.05 <- c(prev_pi_0.05, quantile(dat_pi[,i], probs= 0.05))
-  prev_pi_0.50 <- c(prev_pi_0.50, quantile(dat_pi[,i], probs= 0.50))
-  prev_pi_0.95 <- c(prev_pi_0.95, quantile(dat_pi[,i], probs= 0.95))
-}
-
-prev <- data.frame("day"= c(1:d_test02), "group"= "S", "prev"= as.numeric(prev_s_0.50),
-                   "prev_05"= as.numeric(prev_s_0.05), "prev_95"= as.numeric(prev_s_0.95))
-prev <- rbind(prev, data.frame("day"= c(1:d_test02), "group"= "R", "prev"= as.numeric(prev_r_0.50), 
-                               "prev_05"= as.numeric(prev_r_0.05), "prev_95"= as.numeric(prev_r_0.95)))
-prev <- rbind(prev, data.frame("day"= c(1:d_test02), "group"= "PI", "prev"= as.numeric(prev_pi_0.50), 
-                               "prev_05"= as.numeric(prev_pi_0.05), "prev_95"= as.numeric(prev_pi_0.95)))
-
-ap01 <- 100 * (n_test01/n_sample)
-ap02 <- 100 * (n_test02/n_sample)
-
-ll01 <- ap01 - 100 * qnorm(1-0.05/2, 0, 1) * ((n_test01/n_sample) * (1 - n_test01/n_sample)/n_sample)^0.5
-ul01 <- ap01 + 100 * qnorm(1-0.05/2, 0, 1) * ((n_test01/n_sample) * (1 - n_test01/n_sample)/n_sample)^0.5
-ll02 <- ap02 - 100 * qnorm(1-0.05/2, 0, 1) * ((n_test02/n_sample) * (1 - n_test02/n_sample)/n_sample)^0.5
-ul02 <- ap02 + 100 * qnorm(1-0.05/2, 0, 1) * ((n_test02/n_sample) * (1 - n_test02/n_sample)/n_sample)^0.5
-
-ll01 <- ifelse(ll01 > 100, 100, ifelse(ll01 < 0, 0, ll01))
-ul01 <- ifelse(ul01 > 100, 100, ifelse(ll01 < 0, 0, ul01))
-ll02 <- ifelse(ll02 > 100, 100, ifelse(ul02 == 100, 100 * (1 - 3/n_sample), ifelse(ll01 < 0, 0, ll02)))
-ul02 <- ifelse(ul02 >= 100, 100, ifelse(ll01 < 0, 0, ul02))
-
-img <- ggplot(data= prev, aes(x= day, y= prev, group= group)) +
-  geom_line(aes(color= group), size= 1.2) +
-  scale_color_manual(values= c("S"= "blue", "R"= "green", "PI"= "red")) +
-  geom_ribbon(data= prev, aes(x= day, ymax= prev_95, ymin= prev_05, fill= group), alpha= 0.3) +
-  scale_fill_manual(values= c("S"= "lightblue", "R"= "lightgreen", "PI"= "darksalmon")) +
-  geom_segment(aes(x= d_test01, xend= d_test01, y= ll01, yend= ul01)) +
-  geom_segment(aes(x= d_test02, xend= d_test02, y= ll02, yend= ul02)) +
-  geom_point(aes(x= d_test01, y= ap01), colour= "red", shape= 20, size= 3.5) +
-  geom_point(aes(x= d_test02, y= ap02), colour= "red", shape= 20, size= 3.5) +
-  labs(x= "Days from weaning", y= "Simulated AP of sero-positive heifers (%)") +
-  theme(legend.position= "none",
-        panel.background= element_rect(fill= "white", colour= "black"),
-        axis.title.x= element_text(size= 15, colour= "black"),
-        axis.title.y= element_text(size= 15, colour= "black"),
-        axis.text.x = element_text(size= 12.5, colour= "black"),
-        axis.text.y = element_text(size= 12.5, colour= "black"),
-        strip.text = element_text(size= 15),
-        aspect.ratio= 0.5) +
-  scale_x_continuous(breaks= c(0, 200, 400, 600), limits= c(-5, d_test02+5)) +
-  scale_y_continuous(breaks= c(0, 25, 50, 75, 100), limits= c(-5, 105)) +
-  geom_vline(xintercept= c(0, 200, 400, 600), linetype= "solid", colour= "grey84", alpha= 0.5) +
-  geom_hline(yintercept= c(0, 25, 50, 75, 100), linetype= "solid", colour= "grey84", alpha= 0.5)
-img
-ggsave(filename= paste("Prev_", farm, ".tiff", sep= ""), device= "tiff", dpi= 500)
+save.image("bvdv_norm_parll.RData")
