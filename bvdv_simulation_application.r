@@ -13,25 +13,25 @@ library(TeachingDemos)
 
 detectCores(logical= T)
 n_core <- 8 # It depends on the number of core available for the local machine.
-cl <- makeCluster(n_core)
+cl <- makeCluster(n_core) # Setting up the cores to use for parallel computation.
 
 # Setup seed for RNG
-clusterSetRNGStream(cl, iseed= 1)
+clusterSetRNGStream(cl, iseed= 1) # Assign different seeds for different cores.
 
 # ABC-SMC for estimating within-herd BVDV transmission parameter
 setwd("D:/Temp/Seroconversion")
 
 # Observed value
-n_hfr <- c(42, 90, 45, 26, 23, 40, 21, 20, 29)
-init_age <- c(202, 257, 242, 233, 225, 207, 227, 221, 208)
-n_sample <- c(15, 14, 15, 15, 15, 14, 15, 15, 15)
-f_psm <- c(250, 230, 203, 236, 590, 250, 590, 236, 240) 
-s_psm <- f_psm + 365
-mate_period <- c(70, 42, 42, 84 ,84, 42, 84, 112, 84)
-d_test01 <- c(590, 549, 533, 579, 946, 625, 950, 597, 640)
-d_test02 <- c(735, 690, 711, 731, 1097, 752, 1097, 736, 794)
-n_test01 <- c(9, 11, 2, 13, 13, 7, 3, 12, 14)
-n_test02 <- c(6, 1, 6, 2, 2, 4, 9, 3, 1)
+n_hfr <- c(42, 90, 45, 26, 23, 40, 21, 20, 29) # Number of heifers per farm
+init_age <- c(202, 257, 242, 233, 225, 207, 227, 221, 208) # Calibrated age of heifers when they were weaned
+n_sample <- c(15, 14, 15, 15, 15, 14, 15, 15, 15) # Number of sampled heifers per farm
+f_psm <- c(250, 230, 203, 236, 590, 250, 590, 236, 240) # Simulation day of first planned start date of mating
+s_psm <- f_psm + 365 # Simulation day of second planned start date of mating
+mate_period <- c(70, 42, 42, 84 ,84, 42, 84, 112, 84) # Mating period
+d_test01 <- c(590, 549, 533, 579, 946, 625, 950, 597, 640) # Simulation day of the first test
+d_test02 <- c(735, 690, 711, 731, 1097, 752, 1097, 736, 794) # Simulation day of the second test
+n_test01 <- c(9, 11, 2, 13, 13, 7, 3, 12, 14) # Number of sero-positive heifers at the first test
+n_test02 <- c(6, 1, 6, 2, 2, 4, 9, 3, 1) # Number of sero-positive heifers at the second test
 
 clusterExport(cl, c("n_hfr", "init_age", "n_sample", "f_psm", "s_psm", "mate_period", "d_test01", "d_test02", "n_test01", "n_test02"))
 
@@ -39,13 +39,13 @@ clusterExport(cl, c("n_hfr", "init_age", "n_sample", "f_psm", "s_psm", "mate_per
 # Setting the variables for ABC-SMC
 max_t <- 15 # Number of sequences
 max_i <- 2000/n_core # Number of particles
-tuner <- 0.68
+tuner <- 0.68 # Tuning value for adjusting variance to sample in the next sequence
 
-n_sim_pos01 <- rep(0, 9)
-n_sim_pos02 <- rep(0, 9)
+n_sim_pos01 <- rep(0, 9) # Dummy variable to store the simulation result (first test)
+n_sim_pos02 <- rep(0, 9) # Dummy variable to store the simulation result (second test)
 
-diff_01_list <- NULL # List to store the summary statistics
-diff_02_list <- NULL # List to store the summary statistics
+diff_01_list <- NULL # Dummy list to store the summary statistics
+diff_02_list <- NULL # Dummy list to store the summary statistics
 
 clusterExport(cl, c("max_t", "max_i", "tuner", "n_sim_pos01", "n_sim_pos02"))
 
@@ -112,7 +112,7 @@ diff_01_list <- NULL; diff_02_list <- NULL
 print(epsilon); clusterExport(cl, "epsilon")
 
 
-# Setting the weights and sd for sampling in the second sequence of ABC-SMC
+# Setting the dummy lists of weights and sds for sampling in the second sequence of ABC-SMC
 beta_list <- rbeta(max_i*n_core, 1.9668, 2.4501)
 mu_list <- NULL
 rho_list <- NULL
@@ -135,6 +135,7 @@ tau_wgt<- list(rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_co
                rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), 
                rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core), rep(1/max_i*n_core, max_i*n_core))
 
+# Lists of _tmp is required for updating information between sequences 
 beta_list_tmp <- NULL; beta_wgt_tmp <- NULL
 
 rho_list_tmp <- list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
