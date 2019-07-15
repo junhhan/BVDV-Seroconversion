@@ -36,7 +36,7 @@ n_test02 <- c(6, 1, 6, 2, 2, 4, 9, 3, 1)
 clusterExport(cl, c("n_hfr", "init_age", "n_sample", "f_psm", "s_psm", "mate_period", "d_test01", "d_test02", "n_test01", "n_test02"))
 
 
-# Setting the varibles for ABC-SMC
+# Setting the variables for ABC-SMC
 max_t <- 15 # Number of sequences
 max_i <- 2000/n_core # Number of particles
 tuner <- 0.68
