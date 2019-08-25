@@ -8,8 +8,6 @@
 
 rm(list= ls())
 library(parallel)
-library(TeachingDemos)
-
 
 detectCores(logical= T)
 n_core <- 8 # It depends on the number of core available for the local machine.
