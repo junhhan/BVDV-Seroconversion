@@ -1,6 +1,6 @@
 # Warning! This code is built for parallel computation. 
 # For those who want to use the single core, all the command relevant to "parallel" package should be removed and modified.
-# However, running this code using single core would cost ~263 hours depending on the system.
+# However, running this code using single core would cost ~240 hours depending on the system.
 
 # To run "bvdv_simulation.c" in R, one should compile the .c file into .dll that can be recognised and imported to R.
 # Compilation can be done by running "R CMD SHLIB bvdv_simulation.c" at either R terminal or MS-DOS prompt.
@@ -15,8 +15,10 @@ detectCores(logical= T)
 n_core <- 8 # It depends on the number of core available for the local machine.
 cl <- makeCluster(n_core) # Setting up the cores to use for parallel computation.
 
-# Setup seed for RNG
-clusterSetRNGStream(cl, iseed= 1) # Assign different seeds for different cores.
+# Setup seed for RNG: Assign different seeds for different cores.
+set.seed(1)
+clusterSetRNGStream(cl, iseed= 1)
+clusterApply(cl, seq_along(cl), function(i) seed <<- i - 1)
 
 # ABC-SMC for estimating within-herd BVDV transmission parameter
 setwd("D:/Temp/Seroconversion")
@@ -59,7 +61,7 @@ bvdv_simulation <- function(beta, n_hfr, init_age, n_sample, f_psm, s_psm,
   
   .C("bvdv_simulation", as.double(beta), as.double(rho), as.double(mu), as.integer(tau), as.integer(n_hfr), 
      as.integer(init_age), as.integer(n_sample), as.integer(f_psm), as.integer(s_psm), as.integer(mate_period), 
-     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02))
+     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02), as.integer(seed))
 }
 
 clusterExport(cl, c('bvdv_simulation'))
@@ -79,7 +81,7 @@ result <-
       for (j in 1:9) {
         assign(paste("result0", j, sep= ""), 
                bvdv_simulation(beta, n_hfr[j], init_age[j], n_sample[j], f_psm[j], s_psm[j], 
-                               mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j]))
+                               mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j], seed))
       }
       
       diff01 <- (
@@ -164,7 +166,7 @@ for (j in 1:9) {
 
 # Model description for the rest sequences
 bvdv_simulation <- function(beta, rho_list, rho_wgt, rho_sd, mu_list, mu_wgt, mu_sd, tau_list, tau_wgt, tau_sd, 
-                            n_hfr, init_age, n_sample, f_psm, s_psm, mate_period, d_test01, d_test02, n_sim_pos01, n_sim_pos02) {
+                            n_hfr, init_age, n_sample, f_psm, s_psm, mate_period, d_test01, d_test02, n_sim_pos01, n_sim_pos02, seed) {
   
   repeat {rho_star <- sample(rho_list, size= 1, prob= rho_wgt)
     rho <- rnorm(1, rho_star, rho_sd); if (rho >= 0 & rho <= 1) {break}}
@@ -175,7 +177,7 @@ bvdv_simulation <- function(beta, rho_list, rho_wgt, rho_sd, mu_list, mu_wgt, mu
   
   .C("bvdv_simulation", as.double(beta), as.double(rho), as.double(mu), as.integer(tau), as.integer(n_hfr), as.integer(init_age), 
      as.integer(n_sample), as.integer(f_psm), as.integer(s_psm), as.integer(mate_period), 
-     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02))
+     as.integer(d_test01), as.integer(d_test02), as.integer(n_sim_pos01), as.integer(n_sim_pos02), as.integer(seed))
 }
 
 clusterExport(cl, c('bvdv_simulation'))
@@ -223,7 +225,7 @@ for (t in 2:max_t) {
           assign(paste("result0", j, sep= ""), 
                  bvdv_simulation(beta, rho_list[[j]], rho_wgt[[j]], rho_sd[[j]], mu_list[[j]], mu_wgt[[j]], mu_sd[[j]], 
                                  tau_list[[j]], tau_wgt[[j]], tau_sd[[j]], n_hfr[j], init_age[j], n_sample[j], f_psm[j], s_psm[j], 
-                                 mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j]))
+                                 mate_period[j], d_test01[j], d_test02[j], n_sim_pos01[j], n_sim_pos02[j], seed))
         }
         
         diff01 <- (
